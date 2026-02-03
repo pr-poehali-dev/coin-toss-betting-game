@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -6,7 +6,10 @@ import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
 
+const GAME_API = 'https://functions.poehali.dev/916c4eac-fecb-4f01-a7f5-c151543ae44f';
+
 const Index = () => {
+  const [playerId, setPlayerId] = useState<number | null>(null);
   const [balance, setBalance] = useState(100);
   const [betAmount, setBetAmount] = useState(10);
   const [selectedSide, setSelectedSide] = useState<'heads' | 'tails' | null>(null);
@@ -16,9 +19,43 @@ const Index = () => {
   const [totalGames, setTotalGames] = useState(0);
   const [wins, setWins] = useState(0);
   const [totalWinnings, setTotalWinnings] = useState(0);
+  const [depositAmount, setDepositAmount] = useState('');
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawAddress, setWithdrawAddress] = useState('');
 
-  const handleFlip = () => {
-    if (!selectedSide) {
+  useEffect(() => {
+    const initPlayer = async () => {
+      try {
+        const telegramId = (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.id || Math.floor(Math.random() * 1000000);
+        const username = (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || 'guest';
+        
+        const response = await fetch(GAME_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'get_or_create_player',
+            telegram_id: telegramId,
+            username: username
+          })
+        });
+        
+        const data = await response.json();
+        setPlayerId(data.player_id);
+        setBalance(data.balance);
+        setTotalGames(data.total_games);
+        setWins(data.wins);
+        setTotalWinnings(data.total_winnings);
+      } catch (error) {
+        console.error('Failed to init player:', error);
+        toast.error('Ошибка подключения');
+      }
+    };
+    
+    initPlayer();
+  }, []);
+
+  const handleFlip = async () => {
+    if (!selectedSide || !playerId) {
       toast.error('Выберите сторону монеты');
       return;
     }
@@ -35,35 +72,110 @@ const Index = () => {
 
     setIsFlipping(true);
     
-    setTimeout(() => {
-      const result = Math.random() > 0.5 ? 'heads' : 'tails';
-      setLastResult(result);
+    try {
+      const response = await fetch(GAME_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'play',
+          player_id: playerId,
+          bet_amount: betAmount,
+          selected_side: selectedSide
+        })
+      });
+      
+      const data = await response.json();
+      
+      setTimeout(() => {
+        setLastResult(data.result_side);
+        setIsFlipping(false);
+        setBalance(data.balance);
+        setTotalGames(data.total_games);
+        setWins(data.wins);
+        setTotalWinnings(data.total_winnings);
+        
+        if (data.won) {
+          toast.success(`Вы выиграли ${data.win_amount} TON!`);
+        } else {
+          toast.error(`Вы проиграли ${betAmount} TON`);
+        }
+        
+        setSelectedSide(null);
+      }, 2000);
+    } catch (error) {
       setIsFlipping(false);
+      toast.error('Ошибка игры');
+    }
+  };
+
+  const handleDeposit = async () => {
+    if (!playerId || !depositAmount || Number(depositAmount) <= 0) {
+      toast.error('Укажите корректную сумму');
+      return;
+    }
+    
+    try {
+      const response = await fetch(GAME_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_deposit',
+          player_id: playerId,
+          amount: Number(depositAmount)
+        })
+      });
       
-      setTotalGames(prev => prev + 1);
+      const data = await response.json();
       
-      if (result === selectedSide) {
-        const winAmount = betAmount * 2;
-        setBalance(prev => prev + betAmount);
-        setWins(prev => prev + 1);
-        setTotalWinnings(prev => prev + winAmount);
-        toast.success(`Вы выиграли ${winAmount} TON!`);
+      toast.success('Инструкция создана!', {
+        description: `Отправьте ${data.amount} TON на адрес:\n${data.ton_wallet}\nС memo: ${data.memo}`
+      });
+      
+      setDepositAmount('');
+    } catch (error) {
+      toast.error('Ошибка создания депозита');
+    }
+  };
+
+  const handleWithdraw = async () => {
+    if (!playerId || !withdrawAmount || !withdrawAddress) {
+      toast.error('Заполните все поля');
+      return;
+    }
+    
+    try {
+      const response = await fetch(GAME_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_withdrawal',
+          player_id: playerId,
+          amount: Number(withdrawAmount),
+          ton_address: withdrawAddress
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        toast.error(data.error);
       } else {
-        setBalance(prev => prev - betAmount);
-        toast.error(`Вы проиграли ${betAmount} TON`);
+        toast.success('Запрос на вывод создан!');
+        setWithdrawAmount('');
+        setWithdrawAddress('');
       }
-      
-      setSelectedSide(null);
-    }, 2000);
+    } catch (error) {
+      toast.error('Ошибка вывода');
+    }
   };
 
   const winRate = totalGames > 0 ? ((wins / totalGames) * 100).toFixed(1) : '0.0';
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-4 md:p-8">
+    <div className="min-h-screen bg-background text-foreground p-2 sm:p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold">CoinFlip</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">CoinFlip</h1>
           <div className="flex items-center gap-2 bg-card px-4 py-2 rounded-lg border border-border">
             <Icon name="Wallet" size={20} className="text-primary" />
             <span className="font-semibold">{balance.toFixed(2)} TON</span>
@@ -71,7 +183,7 @@ const Index = () => {
         </div>
 
         <Tabs defaultValue="game" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 mb-6">
+          <TabsList className="grid w-full grid-cols-3 mb-4 sm:mb-6">
             <TabsTrigger value="game" className="flex items-center gap-2">
               <Icon name="Coins" size={18} />
               <span>Игра</span>
@@ -87,10 +199,10 @@ const Index = () => {
           </TabsList>
 
           <TabsContent value="game" className="space-y-6">
-            <Card className="p-8 md:p-12 bg-card border-border">
-              <div className="flex flex-col items-center space-y-8">
+            <Card className="p-4 sm:p-6 md:p-8 lg:p-12 bg-card border-border">
+              <div className="flex flex-col items-center space-y-4 sm:space-y-6 md:space-y-8">
                 <div 
-                  className={`w-32 h-32 md:w-40 md:h-40 rounded-full flex items-center justify-center text-6xl md:text-7xl font-bold shadow-2xl transition-all ${
+                  className={`w-24 h-24 sm:w-32 sm:h-32 md:w-40 md:h-40 rounded-full flex items-center justify-center text-5xl sm:text-6xl md:text-7xl font-bold shadow-2xl transition-all ${
                     isFlipping ? 'animate-flip' : ''
                   } ${
                     lastResult === 'heads' ? 'bg-primary text-primary-foreground' : 
@@ -203,11 +315,10 @@ const Index = () => {
                       <Input
                         placeholder="Сумма пополнения"
                         type="number"
+                        value={depositAmount}
+                        onChange={(e) => setDepositAmount(e.target.value)}
                       />
-                      <Input
-                        placeholder="Memo (опционально)"
-                      />
-                      <Button className="w-full">
+                      <Button className="w-full" onClick={handleDeposit}>
                         <Icon name="Plus" size={18} className="mr-2" />
                         Создать запрос
                       </Button>
@@ -223,11 +334,15 @@ const Index = () => {
                       <Input
                         placeholder="Сумма вывода"
                         type="number"
+                        value={withdrawAmount}
+                        onChange={(e) => setWithdrawAmount(e.target.value)}
                       />
                       <Input
                         placeholder="TON адрес"
+                        value={withdrawAddress}
+                        onChange={(e) => setWithdrawAddress(e.target.value)}
                       />
-                      <Button className="w-full" variant="secondary">
+                      <Button className="w-full" variant="secondary" onClick={handleWithdraw}>
                         <Icon name="Send" size={18} className="mr-2" />
                         Отправить запрос
                       </Button>

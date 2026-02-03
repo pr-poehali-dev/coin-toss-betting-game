@@ -1,0 +1,20 @@
+{
+  "tests": [
+    {
+      "name": "Get or create player",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "get_or_create_player",
+        "telegram_id": 123456789,
+        "username": "testuser"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "player_id": "number",
+        "balance": "number"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
